@@ -1,24 +1,25 @@
 {
   "schemaVersion": 1,
   "id": "ollama-cloud.ai-usage",
-  "name": "AI Usage",
-  "version": "1.0.0",
+  "name": "Ollama Cloud Usage",
+  "version": "1.1.0",
   "author": "GePi0",
   "license": "MIT",
-  "description": "Claude Code, Codex, Fireworks, and Ollama Cloud usage, limits, and balance in one native Omarchy bar panel with a built-in Ollama collector.",
+  "description": "Real-time Ollama Cloud account usage in your Omarchy bar: plan, session and weekly limits, balance, and per-model requests. Optionally link Claude Code, Codex, and Fireworks.",
   "kinds": ["bar-widget"],
   "activation": "on-demand",
   "entryPoints": {
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "AI Usage",
-    "description": "One bar icon and one panel: rate-limit meters with pace, extra-usage balance, per-model requests, today, the last week, and the all-time model breakdown for every subscription, including Ollama Cloud via its built-in collector.",
+    "displayName": "Ollama Cloud Usage",
+    "description": "Real-time usage from your ollama.com account: plan tier, session and weekly limit meters with reset countdowns, extra-usage balance, and per-model requests — plus optional cards for Claude Code, Codex CLI, and Fireworks if you use them.",
     "category": "AI",
     "aliases": [
+      "ai-usage",
       "agents",
-      "model-usage",
-      "ollama"
+      "ollama",
+      "model-usage"
     ],
     "allowMultiple": false,
     "defaults": {
