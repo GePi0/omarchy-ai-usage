@@ -9,19 +9,19 @@ One bar icon, one panel, one plugin: **Claude Code, Codex, Fireworks, and Ollama
 | Feature | Claude Code | Codex CLI | Fireworks | Ollama Cloud |
 |---|---|---|---|---|
 | Plan tier (PRO, etc.) | ✅ | ✅ | ✅ | ✅ |
-| Session + weekly limit meters with % used | ✅ | ✅ | ✅ | ✅ |
+| Session (5-hour) + weekly limit meters with % used | ✅ | ✅ | ✅ | ✅ |
 | Reset countdowns | ✅ | ✅ | ✅ | ✅ |
 | Extra-usage balance (prepaid credits) | — | — | ✅ | ✅ |
 | Per-model request counts | — | — | — | ✅ |
-| Token breakdown (input/output/cache/reasoning) | ✅ | ✅ | — | — |
-| Today + last 7 days history chart | ✅ | ✅ | ✅ | ✅ |
+| Per-model token breakdown (input/output/cache) | ✅ | ✅ | ✅ | — |
+| Today + last 7 days token history | ✅ | ✅ | ✅ | — |
 | Multi-machine sync (optional) | ✅ | ✅ | ✅ | ✅ |
 
-- **One panel for every provider.** Switch providers with the moon icon / middle-click, or scroll through them; providers without data collapse automatically.
-- **Limit meters with pace.** Each window shows how much of your 5-hour session and weekly allowance is used, when it resets, and how fast you are burning through it.
-- **Per-model requests (Ollama Cloud).** See which models you actually used this week — e.g. `glm 5.3 Flash`, `gemma4:31b` — with request counts.
-- **History.** Today's prompts/sessions and tokens, plus a 7-day bar chart with a peak marker.
-- **Keyboard friendly.** `r` refreshes, arrows move between providers and scroll the panel, `Esc` closes. Right-click on the bar icon opens the agent picker; middle-click cycles providers.
+- **One panel for every provider.** Providers without data don't appear at all, so you only ever see what you actually use. ollama.com reports account-global numbers, so when sync is on they are merged, never summed across machines.
+- **Limit meters.** Each window shows how much of your 5-hour session and weekly allowance is used and when it resets. The bar icon lights up when a window passes 90% or your prepaid balance runs low.
+- **Per-model requests (Ollama Cloud).** See which models you actually used this week — e.g. `glm 5.3 Flash`, `gemma4:31b` — with request counts, straight from your ollama.com account.
+- **Token history** (Claude, Codex, Fireworks). Today's prompts/sessions and tokens, plus a 7-day bar chart with a peak marker.
+- **Controls.** Click the bar icon to open the panel. Switch providers with a middle-click on the bar icon, the named tabs inside the panel, or the ←/→ arrow keys; ↑/↓ scrolls. The refresh button in the panel header (or the `r` key) re-reads every provider; `Esc` closes. Right-click on the bar icon opens the agent picker.
 
 ## Install
 
@@ -35,7 +35,7 @@ Click the AI button in the bar and you get one dashboard with every provider nex
 
 - **Omarchy** with the AI widget enabled (`omarchy.agents` is on by default; this plugin replaces it in the bar)
 - **Ollama Cloud provider:** a Chromium-based browser — Google Chrome, Chromium, or Brave — **signed in to [ollama.com](https://ollama.com)**. Just open ollama.com once in your desktop browser and make sure you are logged in; the plugin reads the rest.
-- **Claude Code / Codex CLI / Fireworks:** needed only for their own provider cards. The panel collapses providers with no data, so an empty card never clutters the view.
+- **Claude Code / Codex CLI / Fireworks:** needed only for their own provider cards. Providers without data simply don't show up in the panel.
 
 ## How it works
 
