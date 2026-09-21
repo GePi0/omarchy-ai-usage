@@ -170,11 +170,13 @@ Item {
     var base = updateCommand(kind, agentIds)
     // The built-in Ollama collector ships with this plugin, so every update
     // pass runs it inline: no separate service plugin, no cross-plugin path.
+    // timeout bounds the headless render — an updateProcess that never exits
+    // would otherwise hold the panel's whole refresh loop hostage.
     if (ollamaEnabled() && ollamaCollector !== "") {
       var script = base.map(function(part) {
         return "'" + String(part).replace(/'/g, "'\\''") + "'"
       }).join(" ")
-        + " && python3 '" + ollamaCollector + "' --write"
+        + " && timeout 240 python3 '" + ollamaCollector + "' --write"
         + (kind === "force" ? " --force" : "")
       updateProcess.command = ["bash", "-c", script]
     } else {
@@ -200,34 +202,12 @@ Item {
       ? settings.providers.ollama.enabled !== false : true
   }
 
-  Timer {
-    id: ollamaTimer
-    interval: 900000
-    running: ollamaEnabled() && ollamaCollector !== ""
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.collectOllama(false)
-  }
-
-  // Ollama usage changes slowly and the headless render is not cheap; the
-  // panel refresh already chains the collector, this only adds a slow cadence.
-  function collectOllama(force) {
-    if (!ollamaEnabled() || ollamaCollector === "") return
-    if (ollamaProcess.running) return
-    var cmd = ["python3", ollamaCollector, "--write"]
-    if (force === true) cmd.push("--force")
-    ollamaProcess.command = cmd
-    ollamaProcess.running = true
-  }
-
-  Process {
-    id: ollamaProcess
-    running: false
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: if (text.trim() !== "") console.warn("ai-usage/ollama", text.trim())
-    }
-  }
+  // The Ollama collector is not run on its own timer on purpose. The panel
+  // refresh already chains it after omarchy-agent-usage-update through the
+  // single updateProcess, which serializes runs and collapses overlapping
+  // requests. A second concurrent launcher here would race two headless
+  // browser renders at once, and a hung render inside an unserialized
+  // Process would wedge every later refresh behind it forever.
 
   function refresh() { refreshAll(true) }
   function refreshAll(force) { runUpdate(force === true ? "force" : "normal") }
