@@ -11,6 +11,11 @@ widget.
 
 Auth relies on the browser's own cookie decryption, which needs the session
 keyring; nothing is logged or stored beyond the usage numbers themselves.
+The render keeps Chromium's normal sandbox: the copied cookie database is
+stripped to ollama.com rows, Local State keeps only the os_crypt key
+material, and output is capped before parsing. Set
+OLLAMA_USAGE_ALLOW_NO_SANDBOX=1 to trade the sandbox away explicitly on
+systems where it cannot run; this is an insecure escape hatch, not a default.
 """
 
 from __future__ import annotations
@@ -32,6 +37,11 @@ from pathlib import Path
 AGENT_ID = "ollama"
 AGENT_NAME = "Ollama Cloud"
 SETTINGS_URL = "https://ollama.com/settings"
+
+# Hard cap on --dump-dom output. The DOM is parsed for a handful of
+# attributes and lines; anything beyond this is not a settings page.
+MAX_DOM_BYTES = 10 * 1024 * 1024
+RENDER_TIMEOUT_SEC = 90
 
 # (binary candidates in preference order, per-browser config dir name)
 BROWSERS = [
@@ -159,29 +169,123 @@ def pick_profiles(config_dir: Path) -> list[Path]:
   return sorted(candidates, key=lambda p: (p / "Cookies").stat().st_mtime, reverse=True)
 
 
+def filter_cookie_db(src: Path, dst: Path) -> int:
+  """Copy the cookie DB keeping only ollama.com rows.
+
+  The desktop profile's cookie store covers every site the user is signed
+  in to; a least-privilege render must not carry those. Returns the row
+  count kept.
+  """
+  with sqlite3.connect(f"file:{src}?immutable=1", uri=True) as conn:
+    rows = conn.execute(
+      "SELECT * FROM cookies WHERE host_key LIKE '%ollama.com'"
+    ).fetchall()
+    create_sql = conn.execute(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='cookies'"
+    ).fetchone()
+  if not create_sql or not create_sql[0]:
+    return 0
+  if dst.exists():
+    dst.unlink()
+  with sqlite3.connect(dst) as out:
+    out.execute(create_sql[0])
+    if rows:
+      placeholders = ",".join("?" * len(rows[0]))
+      out.executemany(f"INSERT INTO cookies VALUES ({placeholders})", rows)
+    out.commit()
+  return len(rows)
+
+
+def scrub_local_state(src: Path, dst: Path) -> None:
+  """Keep only the os_crypt key material from Local State."""
+  try:
+    data = json.loads(src.read_text("utf-8"))
+  except (OSError, ValueError):
+    return
+  keep: dict = {}
+  os_crypt = data.get("os_crypt")
+  if isinstance(os_crypt, dict):
+    keep["os_crypt"] = os_crypt
+  user_data_dir = data.get("user_data_dir")
+  if isinstance(user_data_dir, str) and user_data_dir:
+    keep["user_data_dir"] = user_data_dir
+  dst.write_text(json.dumps(keep), "utf-8")
+
+
+def read_capped(stream, cap: int) -> tuple[bytes, bool]:
+  """Read up to cap bytes; returns (data, truncated)."""
+  chunks: list[bytes] = []
+  total = 0
+  truncated = False
+  while True:
+    chunk = stream.read(65536)
+    if not chunk:
+      break
+    room = cap - total
+    if room <= 0:
+      truncated = True
+      break
+    if len(chunk) > room:
+      chunks.append(chunk[:room])
+      truncated = True
+      total += room
+      break
+    chunks.append(chunk)
+    total += len(chunk)
+  return b"".join(chunks), truncated
+
+
 def render_page(binary: str, config_dir: Path, profile_dir: Path, url: str) -> str:
-  """Render a page with headless Chromium using a copy of a real profile."""
+  """Render a page with headless Chromium using a least-privilege profile copy.
+
+  The sandbox stays on: no --no-sandbox. The copied cookie database holds
+  only ollama.com rows and Local State is reduced to the decryption key
+  material, so a renderer compromise sees one site's session, not the
+  desktop browser's. Output is hard-capped before it reaches the parser.
+  """
+  no_sandbox_env = os.environ.get("OLLAMA_USAGE_ALLOW_NO_SANDBOX") == "1"
   with tempfile.TemporaryDirectory(prefix="ollama-usage-") as tmp:
     profile = Path(tmp) / "profile" / "Default"
     profile.mkdir(parents=True)
-    for name in ("Cookies", "Preferences"):
+    cookies_src = profile_dir / "Cookies"
+    if cookies_src.exists():
+      kept = filter_cookie_db(cookies_src, profile / "Cookies")
+      if kept == 0:
+        raise RuntimeError("no ollama.com cookies in the selected profile")
+    for name in ("Preferences",):
       src = profile_dir / name
       if src.exists():
         shutil.copy2(src, profile / name)
     local_state = config_dir / "Local State"
     if local_state.exists():
-      shutil.copy2(local_state, Path(tmp) / "profile" / "Local State")
+      scrub_local_state(local_state, Path(tmp) / "profile" / "Local State")
     flags = [
-      binary, "--headless=new", "--no-sandbox", "--disable-gpu",
+      binary, "--headless=new", "--disable-gpu",
       "--no-first-run", "--disable-sync", "--disable-extensions",
       f"--user-data-dir={tmp}/profile",
       "--virtual-time-budget=15000", "--dump-dom", url,
     ]
+    if no_sandbox_env:
+      flags.insert(1, "--no-sandbox")
     try:
-      proc = subprocess.run(flags, capture_output=True, text=True, timeout=90)
+      proc = subprocess.Popen(
+        flags, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+      )
+    except OSError as exc:
+      raise RuntimeError(f"headless browser failed to start: {exc}")
+    try:
+      dom_bytes, truncated = read_capped(proc.stdout, MAX_DOM_BYTES)
+      proc.wait(timeout=RENDER_TIMEOUT_SEC)
     except subprocess.TimeoutExpired:
+      proc.kill()
+      proc.wait(timeout=10)
       raise RuntimeError("headless browser timed out")
-    dom = proc.stdout
+    finally:
+      if proc.stdout:
+        proc.stdout.close()
+    if truncated:
+      raise RuntimeError("headless browser output exceeded the DOM cap")
+    dom = dom_bytes.decode("utf-8", "replace")
     if proc.returncode != 0 or len(dom) < 2000:
       raise RuntimeError(f"headless browser failed (rc={proc.returncode}, bytes={len(dom)})")
   return dom
