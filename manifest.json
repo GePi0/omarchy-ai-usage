@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "ollama-cloud.ai-usage",
   "name": "Ollama Cloud Usage",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "GePi0",
   "license": "MIT",
   "description": "Real-time Ollama Cloud account usage in your Omarchy bar: plan, session and weekly limits, balance, and per-model requests. Optionally link Claude Code, Codex, and Fireworks.",
