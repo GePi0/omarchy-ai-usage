@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -212,6 +213,34 @@ def scrub_local_state(src: Path, dst: Path) -> None:
   dst.write_text(json.dumps(keep), "utf-8")
 
 
+def kill_process_group(proc: subprocess.Popen) -> None:
+  """SIGKILL the browser's whole process group and reap it.
+
+  Chromium forks crashpad handlers and zygotes that inherit nothing we
+  can wait on; if any of them survives, it keeps the stdio pipes open
+  and a parent like `timeout` or a shell pipeline never observes exit.
+  Killing the group (the browser leads its own session, see
+  start_new_session) removes them all in one syscall.
+  """
+  try:
+    pgid = os.getpgid(proc.pid)
+  except (ProcessLookupError, PermissionError):
+    pgid = None
+  if pgid is not None:
+    try:
+      os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+      pass
+  try:
+    proc.wait(timeout=10)
+  except subprocess.TimeoutExpired:
+    try:
+      proc.kill()
+      proc.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+      pass
+
+
 def read_capped(stream, cap: int) -> tuple[bytes, bool]:
   """Read up to cap bytes; returns (data, truncated)."""
   chunks: list[bytes] = []
@@ -268,8 +297,12 @@ def render_page(binary: str, config_dir: Path, profile_dir: Path, url: str) -> s
     if no_sandbox_env:
       flags.insert(1, "--no-sandbox")
     try:
+      # The browser gets its own process group: crashpad, zygote, and GPU
+      # helpers must never outlive this run, or they would hold the stdio
+      # pipes open and wedge the caller's process management forever.
       proc = subprocess.Popen(
         flags, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        start_new_session=True,
       )
     except OSError as exc:
       raise RuntimeError(f"headless browser failed to start: {exc}")
@@ -277,10 +310,10 @@ def render_page(binary: str, config_dir: Path, profile_dir: Path, url: str) -> s
       dom_bytes, truncated = read_capped(proc.stdout, MAX_DOM_BYTES)
       proc.wait(timeout=RENDER_TIMEOUT_SEC)
     except subprocess.TimeoutExpired:
-      proc.kill()
-      proc.wait(timeout=10)
+      kill_process_group(proc)
       raise RuntimeError("headless browser timed out")
     finally:
+      kill_process_group(proc)
       if proc.stdout:
         proc.stdout.close()
     if truncated:

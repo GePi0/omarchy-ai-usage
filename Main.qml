@@ -118,11 +118,20 @@ Item {
   property string pendingUpdateKind: ""
   readonly property bool updateRunning: updateProcess.running
 
+  // The very first run after the shell launches races a not-yet-ready
+  // session — keyring still locking, Wayland settling — and a headless
+  // browser started in that window can hang. Wait out the cold start.
+  Timer {
+    interval: 60000
+    running: true
+    repeat: false
+    onTriggered: root.runUpdate("normal")
+  }
+
   Timer {
     interval: root.refreshIntervalSec * 1000
     running: true
     repeat: true
-    triggeredOnStart: true
     onTriggered: root.runUpdate("normal")
   }
 
@@ -130,6 +139,7 @@ Item {
     id: updateProcess
     running: false
     onExited: {
+      root.updateStartedAt = 0
       root.rescanAgents()
       if (root.pendingUpdateKind !== "") {
         var kind = root.pendingUpdateKind
@@ -138,11 +148,37 @@ Item {
       }
     }
 
-    onRunningChanged: if (!running) root.refreshFinished()
+    onRunningChanged: {
+      root.updateStartedAt = running ? Date.now() : 0
+      if (!running) root.refreshFinished()
+    }
 
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: if (text.trim() !== "") console.warn("agents", text.trim())
+    }
+  }
+
+  // Defense in depth: the chained command carries its own `timeout -k`, so a
+  // stuck pass should never survive six minutes. If it ever did — a process
+  // group escape, a wedged collector outside this plugin — the refresh loop
+  // would sit 'running' forever and silently swallow every later update.
+  // Cutting the process loose unblocks the pipeline; a stale record beats a
+  // frozen one.
+  property double updateStartedAt: 0
+
+  Timer {
+    interval: 60000
+    repeat: true
+    running: root.updateStartedAt > 0
+    onTriggered: {
+      if (root.updateStartedAt > 0 && Date.now() - root.updateStartedAt > 360000) {
+        console.warn("ai-usage", "update pass exceeded 6 minutes; releasing the refresh loop")
+        root.updateStartedAt = 0
+        updateProcess.running = false
+        root.rescanAgents()
+        root.refreshFinished()
+      }
     }
   }
 
@@ -176,7 +212,7 @@ Item {
       var script = base.map(function(part) {
         return "'" + String(part).replace(/'/g, "'\\''") + "'"
       }).join(" ")
-        + " && timeout 240 python3 '" + ollamaCollector + "' --write"
+        + " && timeout -k 15 240 python3 '" + ollamaCollector + "' --write"
         + (kind === "force" ? " --force" : "")
       updateProcess.command = ["bash", "-c", script]
     } else {
